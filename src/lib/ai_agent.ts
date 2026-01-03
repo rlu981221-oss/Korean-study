@@ -1,8 +1,6 @@
-
 // 这是一个客户端调用 AI 的示例。
-// 重要：在生产环境中，API Key 不应硬编码在前端。建议通过后端转发或使用环境变量。
-const GEMINI_API_KEY = "AIzaSyAcNDhRehrPdXv14dS7Rje0_REsL8WlGeA";
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+// 重要：API Key 已改为从设置中动态读取，不再硬编码。
+const DEFAULT_MODEL = "gemini-2.0-flash";
 
 export interface AIAnalysisResult {
     meaning: string;       // 核心中文含义
@@ -15,7 +13,13 @@ export interface AIAnalysisResult {
     pos: string;          // 词性
 }
 
-export async function fetchAIDeepAnalysis(word: string): Promise<AIAnalysisResult> {
+export async function fetchAIDeepAnalysis(word: string, apiKey?: string): Promise<AIAnalysisResult> {
+    if (!apiKey) {
+        throw new Error("请先在设置中配置您的 Gemini API Key");
+    }
+
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent?key=${apiKey}`;
+
     const prompt = `
     你是一位精通韩语和汉语的语言学专家，专门为 TOPIK 高级学习者提供解析。
     请对韩语单词 "${word}" 进行深度解析，并严格按照以下 JSON 格式返回：

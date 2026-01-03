@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React from 'react';
 import { ActivityIndicator, Alert, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useWordContext, WordWithSRS } from '../context/WordContext';
@@ -41,9 +42,16 @@ export default function WordDetailModal({ visible, word, onClose }: WordDetailMo
 
     const performGeneration = async () => {
         if (!localWord) return;
+
+        const apiKey = await AsyncStorage.getItem('GEMINI_API_KEY');
+        if (!apiKey) {
+            Alert.alert("提示", "请先在设置中配置您的 Gemini API Key");
+            return;
+        }
+
         setIsGenerating(true);
         try {
-            const result = await fetchAIDeepAnalysis(localWord.word);
+            const result = await fetchAIDeepAnalysis(localWord.word, apiKey);
             await saveAIAnalysis(localWord.id, result);
 
             // 立即更新本地状态，实现即时刷新

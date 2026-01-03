@@ -26,6 +26,23 @@ export default function SettingsScreen() {
     const [remoteUrl, setRemoteUrl] = useState('https://raw.githubusercontent.com/example/words.json');
     const [isUpdating, setIsUpdating] = useState(false);
 
+    // AI API Key state
+    const [apiKey, setApiKey] = useState('');
+    const [showApiKey, setShowApiKey] = useState(false);
+
+    React.useEffect(() => {
+        const loadApiKey = async () => {
+            const saved = await AsyncStorage.getItem('GEMINI_API_KEY');
+            if (saved) setApiKey(saved);
+        };
+        loadApiKey();
+    }, []);
+
+    const saveApiKey = async () => {
+        await AsyncStorage.setItem('GEMINI_API_KEY', apiKey);
+        Alert.alert('成功', 'API Key 已保存');
+    };
+
     // Add Word Modal state
     const [modalVisible, setModalVisible] = useState(false);
     const [newWord, setNewWord] = useState('');
@@ -113,7 +130,54 @@ export default function SettingsScreen() {
         <LinearGradient colors={BACKGROUND_COLORS} style={styles.background}>
             <SafeAreaView style={styles.safeArea}>
                 <ScrollView contentContainerStyle={styles.container}>
-                    <Text style={styles.title}>应用设置</Text>
+                    <View style={styles.headerRow}>
+                        <Text style={styles.title}>应用设置</Text>
+                        <View style={styles.versionBadge}>
+                            <Text style={styles.versionLabel}>Pro v1.6.0</Text>
+                        </View>
+                    </View>
+
+                    {/* 0. AI 配置 (新增) */}
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <Ionicons name="bulb" size={20} color="#FFD700" />
+                            <Text style={styles.sectionTitle}>AI 深度解析配置</Text>
+                        </View>
+                        <Text style={styles.hintText}>使用该功能需要配置您的 Gemini API Key</Text>
+
+                        <View style={styles.apiInputWrapper}>
+                            <TextInput
+                                style={styles.apiInput}
+                                placeholder="输入您的 Gemini API Key"
+                                placeholderTextColor="rgba(255,255,255,0.3)"
+                                value={apiKey}
+                                onChangeText={setApiKey}
+                                secureTextEntry={!showApiKey}
+                            />
+                            <TouchableOpacity
+                                style={styles.eyeIcon}
+                                onPress={() => setShowApiKey(!showApiKey)}
+                            >
+                                <Ionicons
+                                    name={showApiKey ? "eye-off-outline" : "eye-outline"}
+                                    size={20}
+                                    color="rgba(255,255,255,0.5)"
+                                />
+                            </TouchableOpacity>
+                        </View>
+
+                        <TouchableOpacity
+                            style={[styles.button, { marginTop: 12, backgroundColor: 'rgba(255, 215, 0, 0.15)' }]}
+                            onPress={saveApiKey}
+                        >
+                            <Ionicons name="save-outline" size={18} color="#FFD700" />
+                            <Text style={[styles.buttonText, { color: '#FFD700' }]}>保存 API Key</Text>
+                        </TouchableOpacity>
+
+                        <Text style={styles.footerHint}>
+                            去 <Text style={{ color: '#00D1FF', textDecorationLine: 'underline' }}>aistudio.google.com</Text> 免费获取 Key
+                        </Text>
+                    </View>
 
                     {/* 1. 每日目标设置 (新功能) */}
                     <View style={styles.section}>
@@ -258,7 +322,10 @@ const styles = StyleSheet.create({
     background: { flex: 1 },
     safeArea: { flex: 1 },
     container: { padding: 20, paddingBottom: 100 },
-    title: { color: '#FFF', fontSize: 28, fontWeight: 'bold', marginBottom: 25 },
+    headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
+    title: { color: '#FFF', fontSize: 28, fontWeight: 'bold' },
+    versionBadge: { backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+    versionLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: '600' },
     section: {
         backgroundColor: 'rgba(255, 255, 255, 0.05)',
         borderRadius: 20,
@@ -308,6 +375,27 @@ const styles = StyleSheet.create({
     dangerButton: { backgroundColor: 'rgba(244, 67, 54, 0.1)', borderColor: 'rgba(244, 67, 54, 0.2)', borderWidth: 1 },
     dangerButtonText: { color: '#F44336', fontSize: 16, fontWeight: '600' },
     hint: { color: 'rgba(255,255,255,0.3)', fontSize: 11, textAlign: 'center', marginTop: 12 },
+    hintText: { color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 12 },
+    footerHint: { color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 10, textAlign: 'center' },
+    apiInputWrapper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        paddingRight: 10,
+    },
+    apiInput: {
+        flex: 1,
+        color: '#FFF',
+        fontSize: 14,
+        padding: 12,
+        fontFamily: 'monospace',
+    },
+    eyeIcon: {
+        padding: 5,
+    },
     footer: { marginTop: 40, alignItems: 'center' },
     versionText: { color: '#444', fontSize: 12 },
     // Modal Styles

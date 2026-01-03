@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -61,6 +62,12 @@ export default function ReviewScreen() {
             return;
         }
 
+        const apiKey = await AsyncStorage.getItem('GEMINI_API_KEY');
+        if (!apiKey) {
+            Alert.alert("提示", "请先在设置中配置您的 Gemini API Key");
+            return;
+        }
+
         setIsBatchProcessing(true);
         setBatchTotal(targets.length);
         setBatchProgress(0);
@@ -79,7 +86,7 @@ export default function ReviewScreen() {
             try {
                 const word = targets[i];
                 console.log(`Processing ${i + 1}/${targets.length}: ${word.word}`);
-                const result = await fetchAIDeepAnalysis(word.word);
+                const result = await fetchAIDeepAnalysis(word.word, apiKey);
                 await saveAIAnalysis(word.id, result);
                 successCount++;
                 setBatchProgress(i + 1);
