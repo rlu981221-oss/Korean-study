@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import * as SQLite from 'expo-sqlite';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { calculateReview, getInitialReviewItem, Rating, ReviewItem } from '../src/lib/srs';
@@ -52,6 +54,8 @@ interface WordContextType {
     repairDatabase: () => Promise<void>;
     addExtraWordsToday: (count: number) => void;
     fetchRemoteLibrary: (url: string) => Promise<number>;
+    exportBackup: () => Promise<void>;
+    importData: () => Promise<void>;
 }
 
 const WordContext = createContext<WordContextType | undefined>(undefined);
@@ -673,6 +677,97 @@ export function WordProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
+    const exportBackup = async () => {
+        if (!db) return;
+        try {
+            // 1. 获取所有数据
+            const vocabResult = await db.getAllAsync('SELECT * FROM vocabulary');
+            const progressResult = await db.getAllAsync('SELECT * FROM progress');
+
+            const backupData = {
+                version: 1,
+                date: new Date().toISOString(),
+                vocabulary: vocabResult,
+                progress: progressResult
+            };
+
+            // 2. 写入临时文件
+            const json = JSON.stringify(backupData, null, 2);
+            const fileName = `nora_backup_${new Date().toISOString().split('T')[0]}.json`;
+            const fileUri = FileSystem.cacheDirectory + fileName;
+
+            await FileSystem.writeAsStringAsync(fileUri, json);
+
+            // 3. 调起分享
+            if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(fileUri);
+            } else {
+                alert("此设备不支持分享功能");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("备份失败: " + e);
+        }
+    };
+
+    const importData = async () => {
+        if (!db) return;
+        try {
+            // 1. 选文件
+            const result = await DocumentPicker.getDocumentAsync({
+                type: 'application/json',
+                copyToCacheDirectory: true
+            });
+
+            if (result.canceled) return;
+            const fileUri = result.assets[0].uri;
+
+            // 2. 读内容
+            const jsonContent = await FileSystem.readAsStringAsync(fileUri);
+            const backup = JSON.parse(jsonContent);
+
+            if (!backup.vocabulary || !backup.progress) {
+                alert("无效的备份文件：缺少核心数据");
+                return;
+            }
+
+            // 3. 写入数据库 (Transaction)
+            // 注意：这是高危操作，先清空
+            await db.withTransactionAsync(async () => {
+                await db.runAsync('DELETE FROM vocabulary');
+                await db.runAsync('DELETE FROM progress');
+
+                // 批量插入 vocabulary
+                for (const word of backup.vocabulary) {
+                    await db.runAsync(
+                        `INSERT INTO vocabulary (id, word, level, breakdown, cn, hanja, phrase1, phrase1_cn, phrase2, phrase2_cn, ai_mnemonic, ai_usage, ai_tips, category, pos, ai_sentences, ai_meaning)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [word.id, word.word, word.level, word.breakdown, word.cn, word.hanja, word.phrase1, word.phrase1_cn, word.phrase2, word.phrase2_cn, word.ai_mnemonic, word.ai_usage, word.ai_tips, word.category, word.pos, word.ai_sentences, word.ai_meaning]
+                    );
+                }
+
+                // 批量插入 progress
+                for (const p of backup.progress) {
+                    await db.runAsync(
+                        `INSERT INTO progress (word_id, ease_factor, interval, repetitions, review_date, first_review_date, review_history)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        [p.word_id, p.ease_factor, p.interval, p.repetitions, p.review_date, p.first_review_date, p.review_history]
+                    );
+                }
+            });
+
+            alert(`恢复成功！共导入 ${backup.vocabulary.length} 个单词，${backup.progress.length} 条进度。`);
+
+            // 4. 刷新 App 状态
+            // 4. 刷新 App 状态
+            loadWords(db);
+
+        } catch (e) {
+            console.error(e);
+            alert("导入失败: " + e);
+        }
+    };
+
     return (
         <WordContext.Provider
             value={{
@@ -690,7 +785,9 @@ export function WordProvider({ children }: { children: React.ReactNode }) {
                 resetAllData,
                 repairDatabase,
                 addExtraWordsToday,
-                fetchRemoteLibrary
+                fetchRemoteLibrary,
+                exportBackup,
+                importData
             }}
         >
             {children}

@@ -5,6 +5,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Modal, SafeAreaView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import SwipeableCard from '../../components/SwipeableCard';
 import WordCard from '../../components/WordCard';
 import { useWords } from '../../context/WordContext';
 import { fetchAIDeepAnalysis } from '../../src/lib/ai_agent';
@@ -21,6 +23,10 @@ export default function ReviewScreen() {
     // 使用 sessionCounter 仅为了强制 WordCard 重置
     const [sessionCounter, setSessionCounter] = useState(0);
 
+    // 新增交互状态：是否处于“已评级，等待点击下一个”的状态
+    const [waitingForNext, setWaitingForNext] = useState(false);
+    const [tempRating, setTempRating] = useState<Rating | null>(null);
+
     // 批量预加载状态
     const [isBatchProcessing, setIsBatchProcessing] = useState(false);
     const [batchProgress, setBatchProgress] = useState(0);
@@ -35,17 +41,27 @@ export default function ReviewScreen() {
     const handleRating = async (rating: Rating) => {
         if (!currentWord) return;
 
+        // 保存评级，进入“等待确认”模式
+        setTempRating(rating);
+        setWaitingForNext(true);
+
         // Haptic feedback
         if (rating === Rating.Again) {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         } else {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
+    };
 
-        // Logic update
-        await updateReview(currentWord.id, rating);
+    const handleNext = async () => {
+        if (!currentWord || tempRating === null) return;
 
-        // Force re-render of next card
+        // 真正提交数据
+        await updateReview(currentWord.id, tempRating);
+
+        // 重置状态，切到下一张
+        setWaitingForNext(false);
+        setTempRating(null);
         setSessionCounter(prev => prev + 1);
     };
 
@@ -63,6 +79,8 @@ export default function ReviewScreen() {
         }
 
         const apiKey = await AsyncStorage.getItem('GEMINI_API_KEY');
+        console.log("DEBUG: Loaded API Key for batch:", apiKey);
+
         if (!apiKey) {
             Alert.alert("提示", "请先在设置中配置您的 Gemini API Key");
             return;
@@ -169,103 +187,126 @@ export default function ReviewScreen() {
     }
 
     return (
-        <LinearGradient colors={BACKGROUND_COLORS} style={styles.background}>
-            <StatusBar barStyle="light-content" />
-            <SafeAreaView style={styles.safeArea}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+            <LinearGradient colors={BACKGROUND_COLORS} style={styles.background}>
+                <StatusBar barStyle="light-content" />
+                <SafeAreaView style={styles.safeArea}>
 
-                {/* 1. 顶部进度栏 */}
-                <View style={styles.header}>
-                    <View style={styles.progressBadge}>
-                        <Ionicons name="albums-outline" size={14} color="#94A3B8" />
-                        <Text style={styles.progressText}>{sessionQueue.length} 待复习</Text>
-                    </View>
-                    <TouchableOpacity onPress={() => router.push('/settings')}>
-                        <Ionicons name="person-circle-outline" size={28} color="rgba(255,255,255,0.7)" />
-                    </TouchableOpacity>
-                </View>
-
-                {/* 1.5 批量预加载入口 (仅当有未解析单词时显示) */}
-                {pendingAIWords.length > 0 && !isSessionComplete && (
-                    <TouchableOpacity
-                        style={styles.preloadBar}
-                        onPress={handleBatchPreload}
-                    >
-                        <LinearGradient
-                            colors={['rgba(0, 209, 255, 0.1)', 'rgba(0, 209, 255, 0.05)']}
-                            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                            style={styles.preloadGradient}
-                        >
-                            <Ionicons name="flash" size={16} color="#00D1FF" />
-                            <Text style={styles.preloadText}>
-                                一键预加载今日 AI 解析 ({pendingAIWords.length}个)
-                            </Text>
-                            <Ionicons name="chevron-forward" size={16} color="rgba(0,209,255,0.5)" />
-                        </LinearGradient>
-                    </TouchableOpacity>
-                )}
-
-                {/* 2. 中间卡片区 */}
-                <View style={styles.cardContainer}>
-                    <WordCard
-                        key={`${currentWord.id}-${sessionCounter}`}
-                        word={currentWord}
-                        onPress={handleVoice} // 点击卡片默认播放发音 (或者翻转取决于 WordCard 内部实现)
-                    />
-                </View>
-
-                {/* 3. 底部操作栏 */}
-                <View style={styles.actionBar}>
-                    <TouchableOpacity
-                        style={[styles.actionButton, styles.againButton]}
-                        onPress={() => handleRating(Rating.Again)}
-                        activeOpacity={0.8}
-                    >
-                        <Ionicons name="repeat" size={24} color="#FCA5A5" style={{ marginBottom: 4 }} />
-                        <Text style={[styles.actionText, { color: '#FCA5A5' }]}>忘记</Text>
-                        <Text style={[styles.actionSubText, { color: 'rgba(252, 165, 165, 0.8)' }]}>稍后重现</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[styles.actionButton, styles.goodButton]}
-                        onPress={() => handleRating(Rating.Good)}
-                        activeOpacity={0.8}
-                    >
-                        <Ionicons name="checkmark-circle-outline" size={24} color="#86EFAC" style={{ marginBottom: 4 }} />
-                        <Text style={[styles.actionText, { color: '#86EFAC' }]}>认识</Text>
-                        <Text style={[styles.actionSubText, { color: 'rgba(134, 239, 172, 0.8)' }]}>移除</Text>
-                    </TouchableOpacity>
-                </View>
-
-            </SafeAreaView>
-
-            {/* 批量处理进度 Modal */}
-            <Modal
-                visible={isBatchProcessing}
-                transparent={true}
-                animationType="fade"
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.progressContainer}>
-                        <ActivityIndicator size="large" color="#00D1FF" style={{ marginBottom: 20 }} />
-                        <Text style={styles.progressTitle}>AI 正在全速解析中...</Text>
-                        <Text style={styles.progressSubtitle}>
-                            {batchProgress} / {batchTotal}
-                        </Text>
-
-                        <View style={styles.progressBarBg}>
-                            <View
-                                style={[
-                                    styles.progressBarFill,
-                                    { width: `${(batchProgress / batchTotal) * 100}%` }
-                                ]}
-                            />
+                    {/* 1. 顶部进度栏 */}
+                    <View style={styles.header}>
+                        <View style={styles.progressBadge}>
+                            <Ionicons name="albums-outline" size={14} color="#94A3B8" />
+                            <Text style={styles.progressText}>{sessionQueue.length} 待复习</Text>
                         </View>
-
-                        <Text style={styles.progressTip}>请勿关闭应用，保持屏幕常亮</Text>
+                        <TouchableOpacity onPress={() => router.push('/settings')}>
+                            <Ionicons name="person-circle-outline" size={28} color="rgba(255,255,255,0.7)" />
+                        </TouchableOpacity>
                     </View>
-                </View>
-            </Modal>
-        </LinearGradient>
+
+                    {/* 1.5 批量预加载入口 (仅当有未解析单词时显示) */}
+                    {pendingAIWords.length > 0 && !isSessionComplete && (
+                        <TouchableOpacity
+                            style={styles.preloadBar}
+                            onPress={handleBatchPreload}
+                        >
+                            <LinearGradient
+                                colors={['rgba(0, 209, 255, 0.1)', 'rgba(0, 209, 255, 0.05)']}
+                                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                                style={styles.preloadGradient}
+                            >
+                                <Ionicons name="flash" size={16} color="#00D1FF" />
+                                <Text style={styles.preloadText}>
+                                    一键预加载今日 AI 解析 ({pendingAIWords.length}个)
+                                </Text>
+                                <Ionicons name="chevron-forward" size={16} color="rgba(0,209,255,0.5)" />
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    )}
+
+                    {/* 2. 中间卡片区 */}
+                    <View style={styles.cardContainer}>
+                        <SwipeableCard
+                            key={`${currentWord.id}-${sessionCounter}`}
+                            onRate={handleRating}
+                            enabled={!waitingForNext} // 只有在没评级前允许滑动
+                        >
+                            <WordCard
+                                word={currentWord}
+                                onPress={handleVoice} // 保持原来的点击发音/翻转逻辑
+                                forceFlipBack={waitingForNext}
+                            />
+                        </SwipeableCard>
+                    </View>
+
+                    {/* 3. 底部操作栏 */}
+                    <View style={styles.footer}>
+                        {!waitingForNext ? (
+                            <View style={styles.buttonRow}>
+                                <TouchableOpacity
+                                    style={[styles.actionBtn, styles.forgotBtn]}
+                                    onPress={() => handleRating(Rating.Again)}
+                                >
+                                    <Ionicons name="close" size={28} color="#FF5252" />
+                                    <Text style={styles.btnLabel}>忘记</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[styles.voiceBtn]}
+                                    onPress={handleVoice}
+                                >
+                                    <Ionicons name="volume-high" size={24} color="#FFF" />
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[styles.actionBtn, styles.knowBtn]}
+                                    onPress={() => handleRating(Rating.Good)}
+                                >
+                                    <Ionicons name="checkmark" size={28} color="#4CAF50" />
+                                    <Text style={styles.btnLabel}>认识</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <TouchableOpacity
+                                style={styles.nextButton}
+                                onPress={handleNext}
+                            >
+                                <Text style={styles.nextButtonText}>下一个</Text>
+                                <Ionicons name="arrow-forward" size={20} color="#000" />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                </SafeAreaView>
+
+                {/* 批量处理进度 Modal */}
+                <Modal
+                    visible={isBatchProcessing}
+                    transparent={true}
+                    animationType="fade"
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.progressContainer}>
+                            <ActivityIndicator size="large" color="#00D1FF" style={{ marginBottom: 20 }} />
+                            <Text style={styles.progressTitle}>AI 正在全速解析中...</Text>
+                            <Text style={styles.progressSubtitle}>
+                                {batchProgress} / {batchTotal}
+                            </Text>
+
+                            <View style={styles.progressBarBg}>
+                                <View
+                                    style={[
+                                        styles.progressBarFill,
+                                        { width: `${(batchProgress / batchTotal) * 100}%` }
+                                    ]}
+                                />
+                            </View>
+
+                            <Text style={styles.progressTip}>请勿关闭应用，保持屏幕常亮</Text>
+                        </View>
+                    </View>
+                </Modal>
+            </LinearGradient>
+        </GestureHandlerRootView>
     );
 }
 
@@ -340,36 +381,67 @@ const styles = StyleSheet.create({
     },
 
     // Footer Actions
-    actionBar: {
-        flexDirection: 'row',
+    footer: {
         paddingHorizontal: 24,
         paddingBottom: 90, // Increased to avoid TabBar overlap
-        gap: 16,
         height: 180,
+        justifyContent: 'center',
     },
-    actionButton: {
+    buttonRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 16,
+    },
+    actionBtn: {
         flex: 1,
         borderRadius: 24,
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 1,
+        paddingVertical: 15,
     },
-    againButton: {
+    forgotBtn: {
         backgroundColor: 'rgba(239, 68, 68, 0.15)', // Low saturation transparent Red
         borderColor: 'rgba(239, 68, 68, 0.5)',
     },
-    goodButton: {
+    knowBtn: {
         backgroundColor: 'rgba(34, 197, 94, 0.15)', // Low saturation transparent Green
         borderColor: 'rgba(34, 197, 94, 0.5)',
     },
-    actionText: {
+    btnLabel: {
+        color: '#FFF',
+        marginTop: 4,
+        fontWeight: 'bold',
+    },
+    voiceBtn: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    nextButton: {
+        backgroundColor: '#00D1FF',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 18,
+        borderRadius: 16,
+        width: '100%',
+        shadowColor: '#00D1FF',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+    },
+    nextButtonText: {
+        color: '#000',
         fontSize: 18,
         fontWeight: 'bold',
-        marginBottom: 2,
-    },
-    actionSubText: {
-        fontSize: 12,
-        opacity: 0.8,
+        marginRight: 8,
     },
 
     // Completion Screen

@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Dimensions, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Dimensions, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { WordWithSRS, useWords } from '../context/WordContext';
 import { fetchAIDeepAnalysis } from '../src/lib/ai_agent';
 
@@ -9,9 +10,10 @@ const { width, height: screenHeight } = Dimensions.get('window');
 interface WordCardProps {
     word: WordWithSRS;
     onPress?: () => void;
+    forceFlipBack?: boolean; // 新增：父组件强制翻面
 }
 
-export default function WordCard({ word, onPress }: WordCardProps) {
+export default function WordCard({ word, onPress, forceFlipBack }: WordCardProps) {
     const { saveAIAnalysis } = useWords();
     const animatedValue = useRef(new Animated.Value(0)).current;
     const [isFlipped, setIsFlipped] = useState(false);
@@ -22,6 +24,13 @@ export default function WordCard({ word, onPress }: WordCardProps) {
         animatedValue.setValue(0);
         setIsFlipped(false);
     }, [word.id]);
+
+    // 监听强制翻面指令
+    useEffect(() => {
+        if (forceFlipBack && !isFlipped) {
+            handleFlip();
+        }
+    }, [forceFlipBack]);
 
     const handleFlip = () => {
         if (!isFlipped && onPress) onPress();
@@ -46,12 +55,20 @@ export default function WordCard({ word, onPress }: WordCardProps) {
 
     const handleAIAnalysis = async () => {
         if (isAILoading) return;
+
+        const apiKey = await AsyncStorage.getItem('GEMINI_API_KEY');
+        if (!apiKey) {
+            Alert.alert("提示", "请先在设置中配置您的 Gemini API Key");
+            return;
+        }
+
         setIsAILoading(true);
         try {
-            const result = await fetchAIDeepAnalysis(word.word);
+            const result = await fetchAIDeepAnalysis(word.word, apiKey);
             await saveAIAnalysis(word.id, result);
         } catch (err) {
             console.error(err);
+            Alert.alert("Error", "AI 解析失败，请检查网络或 Key 配额");
         } finally {
             setIsAILoading(false);
         }

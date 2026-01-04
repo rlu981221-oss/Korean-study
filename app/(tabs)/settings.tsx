@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAudioPlayer } from 'expo-audio';
+import * as FileSystem from 'expo-file-system/legacy';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useWords } from '../../context/WordContext';
@@ -18,6 +20,8 @@ export default function SettingsScreen() {
         resetAllData,
         repairDatabase,
         fetchRemoteLibrary,
+        exportBackup,
+        importData,
         words
     } = useWords();
 
@@ -30,14 +34,6 @@ export default function SettingsScreen() {
     const [apiKey, setApiKey] = useState('');
     const [showApiKey, setShowApiKey] = useState(false);
 
-    React.useEffect(() => {
-        const loadApiKey = async () => {
-            const saved = await AsyncStorage.getItem('GEMINI_API_KEY');
-            if (saved) setApiKey(saved);
-        };
-        loadApiKey();
-    }, []);
-
     const saveApiKey = async () => {
         await AsyncStorage.setItem('GEMINI_API_KEY', apiKey);
         Alert.alert('成功', 'API Key 已保存');
@@ -47,6 +43,43 @@ export default function SettingsScreen() {
     const [modalVisible, setModalVisible] = useState(false);
     const [newWord, setNewWord] = useState('');
     const [newCn, setNewCn] = useState('');
+
+    // 缓存管理状态
+    const [cacheSize, setCacheSize] = useState('0 KB');
+    const [isClearing, setIsClearing] = useState(false);
+
+    const updateCacheSize = async () => {
+        try {
+            const cacheDir = (FileSystem as any).cacheDirectory + 'audio_cache/';
+            const info = await FileSystem.getInfoAsync(cacheDir);
+            if (!info.exists) {
+                setCacheSize('0 KB');
+                return;
+            }
+            // 简单的统计 (Expo 并没有直接提供整个文件夹大小的 API, 这里用逻辑判断)
+            // 实际开发中如果文件多，这里通常需要递归统计，目前先设为一个可感知的状态
+            const files = await FileSystem.readDirectoryAsync(cacheDir);
+            const size = files.length * 30; // 估算 30KB 每个单词
+            setCacheSize(size > 1024 ? `${(size / 1024).toFixed(1)} MB` : `${size} KB`);
+        } catch (e) {
+            setCacheSize('未知');
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            updateCacheSize();
+            return () => { };
+        }, [])
+    );
+
+    React.useEffect(() => {
+        const loadApiKey = async () => {
+            const saved = await AsyncStorage.getItem('GEMINI_API_KEY');
+            if (saved) setApiKey(saved);
+        };
+        loadApiKey();
+    }, []);
 
     const handleAddWord = async () => {
         if (!newWord || !newCn) {
@@ -262,6 +295,27 @@ export default function SettingsScreen() {
                         </View>
                         <TouchableOpacity
                             style={[styles.button, { marginBottom: 12, backgroundColor: 'rgba(0, 209, 255, 0.1)' }]}
+                            onPress={exportBackup}
+                        >
+                            <Ionicons name="cloud-upload-outline" size={18} color="#00D1FF" />
+                            <Text style={styles.buttonText}>备份数据至文件</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.button, { marginBottom: 12, backgroundColor: 'rgba(255, 152, 0, 0.1)' }]}
+                            onPress={() => {
+                                Alert.alert('警告', '恢复将覆盖当前所有进度，确定继续吗？', [
+                                    { text: '取消', style: 'cancel' },
+                                    { text: '确定恢复', onPress: importData }
+                                ]);
+                            }}
+                        >
+                            <Ionicons name="cloud-download-outline" size={18} color="#FF9800" />
+                            <Text style={[styles.buttonText, { color: '#FF9800' }]}>从备份恢复</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.button, { marginBottom: 12, backgroundColor: 'rgba(158, 158, 158, 0.1)' }]}
                             onPress={handleRepair}
                         >
                             <Ionicons name="refresh-circle-outline" size={18} color="#00D1FF" />
@@ -273,8 +327,48 @@ export default function SettingsScreen() {
                         </TouchableOpacity>
                     </View>
 
+                    {/* 5. 存储管理 (新增) */}
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <Ionicons name="save" size={20} color="#9C27B0" />
+                            <Text style={styles.sectionTitle}>存储空间管理</Text>
+                        </View>
+                        <View style={styles.statusRow}>
+                            <Text style={styles.voiceItem}>语音缓存占用:</Text>
+                            <Text style={[styles.onlineBadgeText, { color: '#9C27B0' }]}>{cacheSize}</Text>
+                        </View>
+                        <TouchableOpacity
+                            style={[styles.button, { marginTop: 10, backgroundColor: 'rgba(156, 39, 176, 0.1)' }]}
+                            onPress={async () => {
+                                setIsClearing(true);
+                                try {
+                                    const getCacheDir = () => {
+                                        const cacheDir = (FileSystem as any).cacheDirectory;
+                                        return cacheDir ? `${cacheDir}audio_cache/` : null;
+                                    };
+                                    const cacheDir = getCacheDir();
+                                    if (cacheDir) {
+                                        await FileSystem.deleteAsync(cacheDir, { idempotent: true });
+                                        await updateCacheSize();
+                                        Alert.alert('成功', '音频缓存已清理');
+                                    } else {
+                                        Alert.alert('失败', '无法获取缓存目录');
+                                    }
+                                } catch (e) {
+                                    Alert.alert('失败', '清理缓存时出错');
+                                } finally {
+                                    setIsClearing(false);
+                                }
+                            }}
+                        >
+                            <Ionicons name="brush-outline" size={16} color="#9C27B0" />
+                            <Text style={[styles.buttonText, { color: '#9C27B0' }]}>清理所有音频缓存</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.hint}>清理后，学习新单词时将重新下载语音。</Text>
+                    </View>
+
                     <View style={styles.footer}>
-                        <Text style={styles.versionText}>Nora Korean Pro v1.5.0</Text>
+                        <Text style={styles.versionText}>Nora Korean Pro v1.6.0</Text>
                     </View>
                 </ScrollView>
             </SafeAreaView>

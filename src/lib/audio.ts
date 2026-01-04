@@ -1,5 +1,5 @@
 import * as Audio from 'expo-audio';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 /**
  * 联网发音源：
@@ -16,9 +16,12 @@ const getAudioUrls = (word: string) => [
 ];
 
 const getCacheDir = () => {
-    // @ts-ignore
-    return FileSystem.cacheDirectory ? `${FileSystem.cacheDirectory}audio_cache/` : null;
+    const cacheDir = (FileSystem as any).cacheDirectory;
+    return cacheDir ? `${cacheDir}audio_cache/` : null;
 };
+
+// 使用全局唯一的播放器实例，避免频繁创建销毁
+let globalPlayer: Audio.AudioPlayer | null = null;
 
 export async function playWordAudio(word: string) {
     const cacheDir = getCacheDir();
@@ -26,44 +29,47 @@ export async function playWordAudio(word: string) {
     const localUri = cacheDir ? `${cacheDir}${encodeURIComponent(word)}.mp3` : null;
     let uriToPlay: string = urls[0];
 
-    // 1. 缓存优先校验
+    // 1. 缓存校验
     if (localUri) {
         try {
-            // 确保目录存在
-            const dirInfo = await FileSystem.getInfoAsync(cacheDir!);
-            if (!dirInfo.exists) {
-                await FileSystem.makeDirectoryAsync(cacheDir!, { intermediates: true });
-            }
-
             const fileInfo = await FileSystem.getInfoAsync(localUri);
             if (fileInfo.exists) {
-                // 本地存在，直接播本地，速度最快
                 uriToPlay = localUri;
                 console.log(`[Audio] Cache hit: ${word}`);
             } else {
-                // 本地不存在，播放网络源，并同步开启静默下载
-                console.log(`[Audio] Cache miss: ${word}. Playing from network and caching...`);
-                // 静默下载存入本地
-                FileSystem.downloadAsync(urls[0], localUri).catch(err => {
-                    console.warn(`[Audio] Failed to cache ${word}:`, err);
-                });
+                console.log(`[Audio] Cache miss: ${word}. Fetching...`);
+                // 确保父目录存在
+                const dirInfo = await FileSystem.getInfoAsync(cacheDir!);
+                if (!dirInfo.exists) {
+                    await FileSystem.makeDirectoryAsync(cacheDir!, { intermediates: true });
+                }
+                // 后台下载
+                FileSystem.downloadAsync(urls[0], localUri).then(res => {
+                    console.log(`[Audio] Successfully cached: ${word} to ${res.uri}`);
+                }).catch(e => console.warn("Cache fail", e));
             }
         } catch (e) {
-            console.warn("[Audio] Cache logic failed, falling back to network:", e);
+            console.warn("[Audio] Cache logic error", e);
         }
     }
 
-    // 2. 执行播放
+    // 2. 播放执行 (重用 Player)
     try {
-        const player = Audio.createAudioPlayer(uriToPlay);
-        player.play();
+        if (!globalPlayer) {
+            globalPlayer = Audio.createAudioPlayer(uriToPlay);
+        } else {
+            // 如果已经在播，可以先停止或者直接换源
+            globalPlayer.replace(uriToPlay);
+        }
+
+        // 兼容处理：确保从头播放
+        globalPlayer.play();
     } catch (error) {
-        console.error("[Audio] Primary source failed, attempting fallback...");
-        try {
-            const fallbackPlayer = Audio.createAudioPlayer(urls[1]);
-            fallbackPlayer.play();
-        } catch (err2) {
-            console.error("[Audio] All audio sources failed.");
+        console.error("[Audio] Play error, trying backup...", error);
+        // 如果主源跪了，强行切备用源
+        if (globalPlayer) {
+            globalPlayer.replace(urls[1]);
+            globalPlayer.play();
         }
     }
 }
